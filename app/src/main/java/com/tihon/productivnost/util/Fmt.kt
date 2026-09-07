@@ -43,6 +43,8 @@ object Fmt {
 
     fun trees(n: Int) = "$n ${plural(n, "дерево", "дерева", "деревьев")}"
 
+    fun plants(n: Int) = "$n ${plural(n, "растение", "растения", "растений")}"
+
     fun bytes(b: Long): String {
         if (b < 1024) return "$b Б"
         val kb = b / 1024.0

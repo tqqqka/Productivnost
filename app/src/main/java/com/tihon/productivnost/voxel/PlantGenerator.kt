@@ -101,13 +101,17 @@ object PlantGenerator {
 
     fun build(plant: Plant): VoxelModel = build(plant.seed, plant.kind, plant.species)
 
-    fun build(seed: Long, kind: PlantKind, species: Int): VoxelModel {
+    /**
+     * @param withGround рисовать ли собственную полянку. В саду её роль играет
+     * клетка грядки, поэтому там растение генерируется без земли.
+     */
+    fun build(seed: Long, kind: PlantKind, species: Int, withGround: Boolean = true): VoxelModel {
         val list = palettesFor(kind)
         val palette = list[((species % list.size) + list.size) % list.size]
         val rnd = Random(seed)
         val b = VoxelBuilder()
 
-        ground(b, rnd, palette)
+        if (withGround) ground(b, rnd, palette)
         b.sealGround()
 
         // Семечко — оно видно уже в самом начале роста.

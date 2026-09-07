@@ -32,15 +32,16 @@ import kotlin.math.sin
 object PlantModelCache {
     private val cache = LruCache<String, VoxelModel>(48)
 
-    fun get(seed: Long, kind: PlantKind, species: Int): VoxelModel {
-        val key = "$seed/${kind.name}/$species"
+    fun get(seed: Long, kind: PlantKind, species: Int, withGround: Boolean = true): VoxelModel {
+        val key = "$seed/${kind.name}/$species/$withGround"
         cache.get(key)?.let { return it }
-        val model = PlantGenerator.build(seed, kind, species)
+        val model = PlantGenerator.build(seed, kind, species, withGround)
         cache.put(key, model)
         return model
     }
 
-    fun get(plant: Plant) = get(plant.seed, plant.kind, plant.species)
+    fun get(plant: Plant, withGround: Boolean = true) =
+        get(plant.seed, plant.kind, plant.species, withGround)
 }
 
 private class Buffers {

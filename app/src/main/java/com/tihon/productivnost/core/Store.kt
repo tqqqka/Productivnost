@@ -135,6 +135,54 @@ object Store {
         return allowed - (u.perApp[pkg] ?: 0L)
     }
 
+    // ------------------------------------------------------- перенос прогресса
+
+    /** Весь прогресс одним JSON — его можно сохранить в файл и вернуть после переустановки. */
+    fun exportJson(): String = json.encodeToString(
+        Backup(
+            exportedAt = System.currentTimeMillis(),
+            settings = _settings.value,
+            garden = _garden.value,
+            tasks = _tasks.value,
+            limits = _limits.value,
+            usage = _usage.value,
+        ),
+    )
+
+    /**
+     * Загружает прогресс из файла, заменяя текущий.
+     *
+     * @return количество восстановленных растений
+     * @throws IllegalArgumentException если это не файл этого приложения
+     */
+    fun importJson(text: String): Int {
+        val backup = runCatching { json.decodeFromString<Backup>(text) }.getOrNull()
+            ?: throw IllegalArgumentException("Файл не похож на сохранение «Продуктивности»")
+        if (backup.app != Backup.APP_TAG) {
+            throw IllegalArgumentException("Файл не похож на сохранение «Продуктивности»")
+        }
+        if (backup.version > Backup.FORMAT_VERSION) {
+            throw IllegalArgumentException("Файл сделан более новой версией приложения")
+        }
+        // Сессия из бэкапа не восстанавливается: она привязана к моменту времени.
+        setFocus(null)
+        setStudy(null)
+        setOutcome(null)
+        _settings.value = backup.settings.also { write("settings", it) }
+        _garden.value = backup.garden.sortedBy { it.plantedAt }.also { write("garden", it) }
+        _tasks.value = backup.tasks.ifEmpty { defaultTasks() }.also { write("tasks", it) }
+        _limits.value = backup.limits.also { write("limits", it) }
+        // Дневные счётчики переносим только если бэкап сделан сегодня.
+        _usage.value = (if (backup.usage.day == today()) backup.usage else UsageState(day = today()))
+            .also { write("usage", it) }
+        return backup.garden.size
+    }
+
+    fun defaultBackupName(): String {
+        val d = LocalDate.now(ZoneId.systemDefault())
+        return "productivnost-%04d-%02d-%02d.json".format(d.year, d.monthValue, d.dayOfMonth)
+    }
+
     private fun defaultTasks(): List<HabitTask> = listOf(
         HabitTask(
             id = "teeth",

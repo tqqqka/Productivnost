@@ -1,5 +1,7 @@
 package com.tihon.productivnost.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,9 +23,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tihon.productivnost.core.Store
@@ -33,11 +37,15 @@ import com.tihon.productivnost.ui.components.Bullet
 import com.tihon.productivnost.ui.components.Chip
 import com.tihon.productivnost.ui.components.Divider
 import com.tihon.productivnost.ui.components.GhostButton
+import com.tihon.productivnost.ui.components.PrimaryButton
 import com.tihon.productivnost.ui.components.SectionTitle
 import com.tihon.productivnost.ui.components.SoftCard
 import com.tihon.productivnost.ui.theme.LocalExtra
 import com.tihon.productivnost.ui.theme.P
 import com.tihon.productivnost.util.Fmt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, navigate: (Route) -> Unit) {
@@ -168,6 +176,11 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (Route) -> Unit) {
             }
         }
 
+        item { SectionTitle("Прогресс") }
+        item {
+            ProgressCard(garden.size)
+        }
+
         item { SectionTitle("Опасная зона") }
         item {
             SoftCard {
@@ -194,6 +207,97 @@ fun SettingsScreen(onBack: () -> Unit, navigate: (Route) -> Unit) {
                 Text("Продуктивность · 1.0", style = MaterialTheme.typography.labelSmall, color = e.faint)
             }
         }
+    }
+}
+
+/**
+ * Перенос прогресса файлом: сад и настройки уезжают в JSON, который переживёт
+ * переустановку и обновление приложения.
+ */
+@Composable
+private fun ProgressCard(plantCount: Int) {
+    val context = LocalContext.current
+    val e = LocalExtra.current
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<String?>(null) }
+    var failed by remember { mutableStateOf(false) }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = Store.exportJson()
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(text.toByteArray(Charsets.UTF_8))
+                    } ?: error("Не удалось открыть файл")
+                    text.length
+                }
+            }
+            failed = result.isFailure
+            status = result.fold(
+                onSuccess = { "Сохранено: ${Fmt.plants(plantCount)} и все настройки" },
+                onFailure = { "Не получилось сохранить: ${it.message}" },
+            )
+        }
+    }
+
+    val loadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = context.contentResolver.openInputStream(uri)?.use { input ->
+                        input.readBytes().toString(Charsets.UTF_8)
+                    } ?: error("Не удалось прочитать файл")
+                    Store.importJson(text)
+                }
+            }
+            failed = result.isFailure
+            status = result.fold(
+                onSuccess = { "Загружено: ${Fmt.plants(it)}" },
+                onFailure = { "Не получилось загрузить: ${it.message}" },
+            )
+        }
+    }
+
+    SoftCard {
+        Text("Перенос прогресса", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+        Text(
+            "Сад, привычки, лимиты и настройки уедут в один файл. " +
+                "Сохрани его перед обновлением или сменой телефона — потом загрузишь обратно.",
+            style = MaterialTheme.typography.bodySmall,
+            color = e.faint,
+        )
+        Spacer(Modifier.height(14.dp))
+        PrimaryButton("Сохранить прогресс", Modifier.fillMaxWidth()) {
+            status = null
+            saveLauncher.launch(Store.defaultBackupName())
+        }
+        Spacer(Modifier.height(10.dp))
+        GhostButton("Загрузить прогресс", Modifier.fillMaxWidth(), tint = P.sky) {
+            status = null
+            loadLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+        }
+        val message = status
+        if (message != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (failed) P.rose else P.leaf,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Загрузка заменит то, что сейчас в приложении.",
+            style = MaterialTheme.typography.labelSmall,
+            color = e.faint,
+        )
     }
 }
 
