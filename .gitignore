@@ -1,0 +1,16 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild
+.cxx
+*.keystore
+*.jks
+keystore/
+
+# Готовый APK лежит в release/, промежуточные сборки — нет
+!release/*.apk
+.kotlin/
