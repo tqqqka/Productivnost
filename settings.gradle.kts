@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 rootProject.name = "Productivnost"
 include(":app")
 include(":preview")
+include(":shtorka")
