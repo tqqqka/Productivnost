@@ -152,6 +152,32 @@ object LiveRepo {
     )
     private val RECORD_WORDS = listOf("запись экрана", "идёт запись", "идет запись", "screen record", "recording screen")
     private val STOPWATCH_WORDS = listOf("секундомер", "stopwatch")
+    /** Уведомления будильника у часов: их «21:04» — это время звонка, а не отсчёт. */
+    private val ALARM_WORDS = listOf("будильник", "alarm", "подъём", "подъем")
+    /** «закончится в 21:04», «до 21:04», «at 21:04» — время дня, а не остаток. */
+    private val AT_TIME = Regex("""(?:^|\s)(?:в|до|at|until|ends?)\s*$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Время отсчёта из текстов уведомления. Отбрасывает время дня: текущее,
+     * «время уведомления» и всё, что стоит после «в»/«до»/«at».
+     */
+    private fun countdownTime(texts: List<String>, n: Notification): String? {
+        val fmt = java.text.SimpleDateFormat("H:mm", java.util.Locale.US)
+        val nowWall = System.currentTimeMillis()
+        val dayTimes = setOf(
+            fmt.format(java.util.Date(nowWall)), fmt.format(java.util.Date(nowWall - 60_000)),
+            fmt.format(java.util.Date(nowWall + 60_000)), fmt.format(java.util.Date(n.`when`)),
+        )
+        for (t in texts) {
+            for (m in TIME.findAll(t)) {
+                val v = m.value
+                if (AT_TIME.containsMatchIn(t.substring(0, m.range.first))) continue
+                if (v.count { it == ':' } == 1 && dayTimes.contains(v.trimStart('0').ifEmpty { "0" }.let { if (it.startsWith(":")) "0$it" else it })) continue
+                return v
+            }
+        }
+        return null
+    }
     private val TIME = Regex("""(?<![\d:])\d{1,2}:\d{2}(:\d{2})?(?![\d:])""")
     /** «300 м», «1,2 км», «0.5 mi» — без \b, он не понимает кириллицу. */
     private val DIST = Regex("""\d+(?:[.,]\d+)?\s?(?:км|м|km|mi|ft|yd|m)(?![\p{L}])""")
@@ -234,6 +260,8 @@ object LiveRepo {
             if (x.visibility != View.VISIBLE) return
             when (x) {
                 is Chronometer -> { base = x.base; down = x.isCountDown }
+                // Часы с текущим временем — это не отсчёт таймера.
+                is android.widget.TextClock -> Unit
                 is TextView -> x.text?.toString()?.takeIf { it.isNotBlank() }?.let { texts += it }
                 is ImageView -> x.drawable?.takeIf { it.intrinsicWidth > 0 }?.let { images += it }
                 is ViewGroup -> for (i in 0 until x.childCount) walk(x.getChildAt(i))
@@ -268,7 +296,7 @@ object LiveRepo {
         val isClock = pkg in CLOCKS
         val isNav = n.category == Notification.CATEGORY_NAVIGATION || pkg in NAV
         val isRec = pkg in RECORDERS || RECORD_WORDS.any { lower.contains(it) }
-        var timeText = allText.firstNotNullOfOrNull { TIME.find(it)?.value }
+        var timeText = countdownTime(allText, n)
         var base = if (n.`when` > 0) SystemClock.elapsedRealtime() + (n.`when` - System.currentTimeMillis()) else 0L
 
         // Своя вёрстка (часы Samsung, Яндекс/Google Карты): читаем её напрямую.
@@ -278,14 +306,14 @@ object LiveRepo {
                 allText += s.texts
                 images = s.images
                 if (s.chronoBase != 0L && !chrono) { chrono = true; base = s.chronoBase; countDown = s.countDown }
-                if (timeText == null) timeText = s.texts.firstNotNullOfOrNull { TIME.find(it)?.value }
+                if (timeText == null) timeText = countdownTime(s.texts, n)
             }
         }
         // Нестандартные поля (Samsung кладёт время своими ключами): тексты и метки времени.
         if ((isClock || isNav || isRec) && !chrono && timeText == null) {
             val deep = deepExtras(ex)
             allText += deep.first
-            timeText = deep.first.firstNotNullOfOrNull { TIME.find(it)?.value }
+            timeText = countdownTime(deep.first, n)
             if (timeText == null) deep.second?.let { (b, down) -> chrono = true; base = b; countDown = down }
         }
         // Таймер, у которого «время уведомления» в будущем, — это и есть момент окончания.
@@ -315,7 +343,8 @@ object LiveRepo {
             isCall && (callType == 1 || (callType == 0 && !chrono &&
                 (n.fullScreenIntent != null || actions.any { it.role == Act.Role.ACCEPT }))) -> Kind.CALL_INCOMING
             isCall && (ongoing || callType == 2) -> Kind.CALL
-            isClock && (ongoing || chrono || timeText != null) ->
+            isClock && ALARM_WORDS.any { lower.contains(it) } && !chrono -> return null
+            isClock && (ongoing || chrono) ->
                 if (STOPWATCH_WORDS.any { lower.contains(it) } || (chrono && !countDown)) Kind.STOPWATCH else Kind.TIMER
             !ongoing -> return null
             isRec -> Kind.RECORDING

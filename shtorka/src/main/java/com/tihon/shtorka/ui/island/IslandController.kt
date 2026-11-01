@@ -73,6 +73,7 @@ class IslandController(private val svc: IslandService) {
     }
 
     fun detach() {
+        stopRinging()
         if (!attached) return
         LiveRepo.remove(listener)
         LiveRepo.onFinished = null
@@ -400,22 +401,7 @@ class IslandController(private val svc: IslandService) {
         if (!attached) return
         val now = SystemClock.elapsedRealtime()
         when (kind) {
-            Kind.CALL_INCOMING -> {
-                val key = "demo:call"
-                lateinit var answer: () -> Unit
-                val decline = { LiveRepo.removed(key) }
-                answer = {
-                    LiveRepo.putDemo(
-                        Live(Kind.CALL, key, "", title = "Мама", text = "мобильный", accent = Palette.GREEN,
-                            chronoBase = SystemClock.elapsedRealtime(), actions = listOf(Act("Завершить", null, Act.Role.DECLINE, decline))),
-                    )
-                    main.postDelayed({ LiveRepo.removed(key) }, 15000)
-                }
-                LiveRepo.putDemo(
-                    Live(Kind.CALL_INCOMING, key, "", title = "Мама", accent = Palette.GREEN,
-                        actions = listOf(Act("Отклонить", null, Act.Role.DECLINE, decline), Act("Ответить", null, Act.Role.ACCEPT) { answer() })),
-                )
-            }
+            Kind.CALL_INCOMING -> testCall()
             Kind.TIMER -> {
                 LiveRepo.putDemo(Live(Kind.TIMER, "demo:timer", "", title = "Таймер", text = "Паста",
                     accent = Palette.ORANGE, chronoBase = now + 5 * 60_000, countDown = true))
@@ -451,7 +437,68 @@ class IslandController(private val svc: IslandService) {
         }
     }
 
+    // ---------- тестовый звонок ----------
+
+    private var ringtone: android.media.Ringtone? = null
+    private val endTestCall = Runnable { stopRinging(); LiveRepo.removed(TEST_CALL) }
+
+    /**
+     * Тестовый входящий звонок: звучит мелодия звонка и вибрация, островок
+     * раскрывается с кнопками. «Ответить» — идёт разговор с таймером,
+     * «Отклонить»/«Завершить» — всё убирается. Сам сбрасывается через 25 с.
+     */
+    fun testCall() {
+        main.removeCallbacks(endTestCall)
+        val decline: () -> Unit = {
+            stopRinging()
+            main.removeCallbacks(endTestCall)
+            LiveRepo.removed(TEST_CALL)
+        }
+        val answer: () -> Unit = {
+            stopRinging()
+            main.removeCallbacks(endTestCall)
+            LiveRepo.putDemo(
+                Live(Kind.CALL, TEST_CALL, "", title = "Мама", text = "мобильный", accent = Palette.GREEN,
+                    chronoBase = SystemClock.elapsedRealtime(), actions = listOf(Act("Завершить", null, Act.Role.DECLINE, decline))),
+            )
+            main.postDelayed(endTestCall, 60_000)
+        }
+        LiveRepo.putDemo(
+            Live(Kind.CALL_INCOMING, TEST_CALL, "", title = "Мама", accent = Palette.GREEN,
+                largeIcon = androidx.core.content.ContextCompat.getDrawable(svc, com.tihon.shtorka.R.mipmap.ic_launcher),
+                actions = listOf(Act("Отклонить", null, Act.Role.DECLINE, decline), Act("Ответить", null, Act.Role.ACCEPT, answer))),
+        )
+        startRinging()
+        main.postDelayed(endTestCall, 25_000)
+    }
+
+    private fun startRinging() {
+        stopRinging()
+        runCatching {
+            val uri = android.media.RingtoneManager.getActualDefaultRingtoneUri(svc, android.media.RingtoneManager.TYPE_RINGTONE)
+                ?: android.provider.Settings.System.DEFAULT_RINGTONE_URI
+            ringtone = android.media.RingtoneManager.getRingtone(svc, uri)?.apply {
+                audioAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                play()
+            }
+        }
+        if (Controls.ringerMode(svc) != android.media.AudioManager.RINGER_MODE_SILENT) runCatching {
+            val v = svc.getSystemService(android.os.Vibrator::class.java)
+            v.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 900, 700), 0))
+        }
+    }
+
+    private fun stopRinging() {
+        runCatching { ringtone?.stop() }
+        ringtone = null
+        runCatching { svc.getSystemService(android.os.Vibrator::class.java).cancel() }
+    }
+
     companion object {
+        private const val TEST_CALL = "demo:call"
         /** Сколько островок держит музыку на паузе, прежде чем спрятаться. */
         const val PAUSE_KEEP_MS = 10_000L
     }

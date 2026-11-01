@@ -113,6 +113,28 @@ class LivesTest {
         LiveRepo.onFinished = null
     }
 
+    @Test
+    fun alarmTimeIsNotATimer() {
+        val n = builder().setContentTitle("Предстоящий будильник").setContentText("Вс 21:04").setOngoing(true).build()
+        assertNull(LiveRepo.classify(ctx, sbn(clock, n)))
+    }
+
+    @Test
+    fun endTimeIsNotACountdown() {
+        // «закончится в 21:04» — время дня; отсчёта нет — значит, без цифр, но с таймером.
+        val n = builder().setContentTitle("Таймер").setContentText("Закончится в 21:04").setOngoing(true).build()
+        val l = LiveRepo.classify(ctx, sbn(clock, n))!!
+        assertEquals(Kind.TIMER, l.kind)
+        assertNull(l.value)
+    }
+
+    @Test
+    fun currentTimeIsNotACountdown() {
+        val now = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(java.util.Date())
+        val n = builder().setContentTitle("Таймер").setContentText(now).setOngoing(true).build()
+        assertNull(LiveRepo.classify(ctx, sbn(clock, n))!!.value)
+    }
+
     @Suppress("unused")
     private fun unused() = Bundle()
 }

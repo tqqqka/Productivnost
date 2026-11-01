@@ -8,7 +8,7 @@ Android-приложение против залипания в телефоне
 
 > В репозитории есть второе приложение — **[Островок](shtorka/README.md)**: Dynamic Island
 > с iPhone вокруг капли камеры (музыка, звонки, таймеры, запись, навигация, уведомления).
-> APK: [`release/ostrovok-2.2.apk`](release/ostrovok-2.2.apk) · 0.8 МБ.
+> APK: [`release/ostrovok-2.3.apk`](release/ostrovok-2.3.apk) · 0.8 МБ.
 
 ---
 

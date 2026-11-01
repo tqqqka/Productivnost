@@ -68,6 +68,14 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = d(6); bottomMargin = d(18) },
         )
         hero()
+        group {
+            row("Тест звонка", "Входящий с мелодией и вибрацией: ответь или сбрось прямо в островке") {
+                withService { svc ->
+                    moveTaskToBack(true)
+                    svc.main.postDelayed({ svc.island.testCall() }, 450)
+                }
+            }
+        }
 
         section("Доступы")
         group {
@@ -351,6 +359,20 @@ class MainActivity : Activity() {
         paint(selected)
         box.addView(seg, LinearLayout.LayoutParams(-1, -2).apply { topMargin = d(10) })
         addRow(box)
+    }
+
+    /** Строка-кнопка с подписью, как «Тест звонка». */
+    private fun row(title: String, sub: String, action: () -> Unit) {
+        val r = rowBase(title, sub)
+        r.addView(GlyphCircleIcon(), LinearLayout.LayoutParams(d(40), d(40)).apply { marginStart = d(10) })
+        r.setOnClickListener { action() }
+        r.background = ripple()
+        addRow(r)
+    }
+
+    private fun GlyphCircleIcon() = com.tihon.shtorka.ui.island.GlyphCircle(this).apply {
+        solid = true
+        set(R.drawable.g_call, Palette.GREEN)
     }
 
     private fun button(title: String, action: () -> Unit) {
