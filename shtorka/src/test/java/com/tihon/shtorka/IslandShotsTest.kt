@@ -91,7 +91,10 @@ class IslandShotsTest {
         val ongoing = Live(Kind.CALL, "c2", title = "Мама", text = "мобильный", accent = Palette.GREEN, chronoBase = now - 42_000,
             actions = listOf(Act("Завершить", null, Act.Role.DECLINE)))
         val rec = Live(Kind.RECORDING, "r", title = "Запись экрана", accent = Palette.RED, chronoBase = now - 12_000)
-        val nav = Live(Kind.NAVIGATION, "n", title = "300 м", text = "Поверните направо на ул. Ленина", value = "300 м")
+        val nav = Live(Kind.NAVIGATION, "n", title = "Поверните направо", text = "ул. Ленина", value = "300 м", eta = "12 мин",
+            navIcon = androidx.core.content.ContextCompat.getDrawable(svc, R.drawable.g_navigation))
+        val navNoEta = Live(Kind.NAVIGATION, "n2", title = "Прямо", value = "1,2 км",
+            navIcon = androidx.core.content.ContextCompat.getDrawable(svc, R.drawable.g_navigation))
         val dl = Live(Kind.PROGRESS, "d", title = "Загрузка", text = "video.mp4", progress = 0.62f, accent = Palette.BLUE, value = "62%")
         val banner = Live(Kind.BANNER, "b", title = "Мама", text = "Ты где? Ужин стынет, приходи скорее домой", value = "Сообщения")
         val cases = listOf(
@@ -103,12 +106,17 @@ class IslandShotsTest {
             "call_ongoing_expanded" to Triple(ongoing, null, true),
             "recording" to Triple(rec, null, false),
             "navigation" to Triple(nav, null, false),
+            "navigation_no_eta" to Triple(navNoEta, null, false),
+            "navigation_expanded" to Triple(nav, null, true),
+            "download_indeterminate" to Triple(Live(Kind.PROGRESS, "d2", title = "Загрузка", indeterminate = true, accent = Palette.BLUE), null, false),
+            "done" to Triple(Live(Kind.DONE, "dn", accent = Palette.GREEN), null, false),
             "download" to Triple(dl, music, false),
             "banner" to Triple(banner, null, true),
             "charging" to Triple(Live(Kind.CHARGING, "ch", level = 85, accent = Palette.GREEN), null, false),
             "low_battery" to Triple(Live(Kind.LOW_BATTERY, "lb", level = 10, accent = Palette.RED), null, false),
             "unlock" to Triple(Live(Kind.UNLOCK, "u"), null, false),
-            "headphones" to Triple(Live(Kind.HEADPHONES, "hp", title = "Galaxy Buds", level = 80), null, false),
+            "headphones" to Triple(Live(Kind.HEADPHONES, "hp", title = "Galaxy Buds", text = "Подключено", level = 80, accent = Palette.GREEN), null, true),
+            "headphones_unknown" to Triple(Live(Kind.HEADPHONES, "hp2", title = "Galaxy Buds", text = "Подключено", accent = Palette.GREEN), null, true),
             "ringer" to Triple(Live(Kind.RINGER, "rg"), null, false),
         )
         for ((name, c) in cases) {

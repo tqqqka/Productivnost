@@ -14,7 +14,6 @@ import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
-import android.widget.Chronometer
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
@@ -63,6 +62,7 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     private var radius = 0f
     private var bubble = 0f
     private var target = FloatArray(3)
+    private var laidOutW = 0f
     private val springW = Spring(0f, 0.3f) { shapeW = it; frame() }
     private val springH = Spring(0f, 0.3f) { shapeH = it; frame() }
     private val springR = Spring(0f, 0.3f) { radius = it; invalidate() }
@@ -82,17 +82,18 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     private val lLock = LockGlyph(ctx)
     private val lDot = RecDot(ctx)
     private val lBat = BatteryGlyph(ctx)
+    private val lNav = android.widget.LinearLayout(ctx).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+    private val lNavIcon = ImageView(ctx)
+    private val lNavText: TextView = ctx.text(12.5f, Fonts.semibold)
     private val rWave = WaveformView(ctx)
-    private val rChrono = Chronometer(ctx).apply {
-        typeface = Fonts.semibold
-        fontFeatureSettings = "tnum"
-        includeFontPadding = false
-    }
+    private val rChrono = TimeText(ctx).apply { typeface = Fonts.semibold }
     private val rText: TextView = ctx.text(12.5f, Fonts.semibold)
     private val rRing = ProgressRing(ctx)
     private val rBat = BatteryGlyph(ctx)
-    private val lefts = listOf<View>(lArt, lIcon, lLock, lDot, lBat)
-    private val rights = listOf<View>(rWave, rChrono, rText, rRing, rBat)
+    private val rIcon = ImageView(ctx)
+    private val rApp = ArtView(ctx).apply { radiusFraction = 0.28f }
+    private val lefts = listOf<View>(lArt, lIcon, lLock, lDot, lBat, lNav)
+    private val rights = listOf<View>(rWave, rChrono, rText, rRing, rBat, rIcon, rApp)
 
     // ---------- вторая активность («капелька» справа) ----------
     private val bubbleBox = FrameLayout(ctx)
@@ -122,6 +123,8 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     init {
         setWillNotDraw(false)
         clipChildren = false
+        lNav.addView(lNavIcon)
+        lNav.addView(lNavText)
         lefts.forEach { leftBox.addView(it, LayoutParams(0, 0)) }
         rights.forEach { rightBox.addView(it, LayoutParams(-2, -2)) }
         addView(leftBox, LayoutParams(-2, -2))
@@ -216,14 +219,14 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
             return
         }
         val grow = target[0] > shapeW + 1f || target[1] > shapeH + 1f
-        val stiff = if (grow) 260f else 380f
-        val damp = if (grow) 0.68f else 0.86f
+        val stiff = if (grow) 480f else 640f
+        val damp = if (grow) 0.72f else 0.88f
         pending = 2
         val end: (Boolean) -> Unit = { c -> if (!c && --pending == 0) settled() }
         springW.animateTo(target[0], stiffness = stiff, damping = damp, onEnd = end)
         springH.animateTo(target[1], stiffness = stiff * 1.1f, damping = damp, onEnd = end)
         springR.animateTo(target[2], stiffness = stiff, damping = 0.9f)
-        springB.animateTo(if (wantBubble) 1f else 0f, stiffness = 300f, damping = 0.62f)
+        springB.animateTo(if (wantBubble) 1f else 0f, stiffness = 420f, damping = 0.66f)
         if (!same) showContent(prevMode, newMode, same = false, immediate = false)
     }
 
@@ -233,13 +236,14 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
             card?.let { stopChronos(it) }
             rChrono.stop()
         }
+        if (mode != Mode.COMPACT) rChrono.stop()
         val withBubble = mode == Mode.COMPACT && secondary != null
         ctl.fitWindow(windowNeed(shapeW, shapeH, withBubble))
         updateTouchRegion(shapeW, shapeH, withBubble)
     }
 
     private fun stopChronos(v: View) {
-        if (v is Chronometer) v.stop()
+        if (v is TimeText) v.stop()
         if (v is android.view.ViewGroup) for (i in 0 until v.childCount) stopChronos(v.getChildAt(i))
     }
 
@@ -272,9 +276,9 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
                 v.alpha = 0f
                 v.scaleX = 0.82f; v.scaleY = 0.82f
                 v.animate().alpha(1f).scaleX(1f).scaleY(1f)
-                    .setStartDelay(if (now == Mode.EXPANDED) 110 else 80).setDuration(230).start()
+                    .setStartDelay(if (now == Mode.EXPANDED) 70 else 40).setDuration(170).start()
             } else if (v.alpha > 0f) {
-                v.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setStartDelay(0).setDuration(90)
+                v.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setStartDelay(0).setDuration(70)
                     .withEndAction { v.visibility = INVISIBLE }.start()
             }
         }
@@ -297,11 +301,12 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
         var right: View? = null
         rText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f * s)
         rChrono.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f * s)
+        lNavText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f * s)
         rText.setTextColor(l.accent)
         rChrono.setTextColor(l.accent)
 
         fun chronoOrText(): View? = when {
-            l.chronoBase != 0L -> { rChrono.bindTo(l); rChrono }
+            l.chronoBase != 0L -> { rChrono.bind(l.chronoBase, l.countDown); rChrono }
             !l.value.isNullOrBlank() -> { rText.text = l.value; rText }
             else -> null
         }
@@ -322,14 +327,33 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
             Kind.TIMER, Kind.STOPWATCH -> { icon(R.drawable.g_timer, Palette.ORANGE); left = lIcon; right = chronoOrText() }
             Kind.RECORDING -> { left = lDot; right = chronoOrText() ?: rText.also { it.text = "REC"; it.setTextColor(Palette.RED) } }
             Kind.NAVIGATION -> {
-                val d = l.largeIcon
-                if (d != null) { lArt.circle = false; lArt.setDrawable(d); left = lArt } else { icon(R.drawable.g_navigation, Palette.WHITE); left = lIcon }
-                rText.setTextColor(Palette.WHITE)
-                right = chronoOrText()
+                // Слева — стрелка манёвра и метры, справа — сколько ехать (или значок навигатора).
+                val d = (l.navIcon ?: ContextCompat.getDrawable(context, R.drawable.g_navigation))!!.mutate()
+                d.setTint(Palette.WHITE)
+                lNavIcon.setImageDrawable(d)
+                lNavText.text = l.value ?: ""
+                lNavText.setTextColor(Palette.WHITE)
+                lNavText.visibility = if (l.value.isNullOrBlank()) GONE else VISIBLE
+                lNavIcon.layoutParams = android.widget.LinearLayout.LayoutParams(glyph, glyph)
+                lNavText.layoutParams = android.widget.LinearLayout.LayoutParams(-2, -2).apply { marginStart = sd(5).roundToInt() }
+                left = lNav
+                if (!l.eta.isNullOrBlank()) {
+                    rText.text = l.eta; rText.setTextColor(Palette.GREEN); right = rText
+                } else {
+                    rApp.setDrawable(l.appIcon); right = rApp
+                }
             }
             Kind.PROGRESS -> {
                 lArt.circle = false; lArt.setDrawable(l.appIcon); left = lArt
-                rRing.color = l.accent; rRing.progress = l.progress.coerceAtLeast(0f); right = rRing
+                rRing.color = l.accent
+                rRing.indeterminate = l.indeterminate
+                rRing.progress = l.progress.coerceAtLeast(0f)
+                right = rRing
+            }
+            Kind.DONE -> {
+                lArt.circle = false; lArt.setDrawable(l.appIcon); left = lArt
+                rIcon.setImageDrawable(ContextCompat.getDrawable(context, R.drawable.g_check)!!.mutate().also { it.setTint(Palette.GREEN) })
+                right = rIcon
             }
             Kind.CHARGING -> {
                 icon(R.drawable.g_bolt, Palette.GREEN); left = lIcon
@@ -361,8 +385,13 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
             Kind.UNLOCK -> { left = lLock; lLock.play() }
             Kind.HEADPHONES -> {
                 icon(R.drawable.g_headphones, Palette.WHITE); left = lIcon
-                if (l.level >= 0) { rRing.color = Palette.GREEN; rRing.progress = l.level / 100f; right = rRing }
-                else { rText.text = "Подключено"; rText.setTextColor(Palette.WHITE); right = rText }
+                if (l.level >= 0) {
+                    rText.text = "${l.level}%"
+                    rText.setTextColor(if (l.level <= 20) Palette.RED else Palette.GREEN)
+                } else {
+                    rText.text = "Подключено"; rText.setTextColor(Palette.WHITE)
+                }
+                right = rText
             }
             Kind.BANNER -> { lArt.setDrawable(l.appIcon); left = lArt }
         }
@@ -374,22 +403,28 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
         fun ex(v: Int) = MeasureSpec.makeMeasureSpec(v, MeasureSpec.EXACTLY)
         val un = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
         val wide = MeasureSpec.makeMeasureSpec(sd(110).roundToInt(), MeasureSpec.AT_MOST)
-        val lSize = when (left) {
-            lArt -> artS
-            lLock -> (glyph * 1.05f).roundToInt()
-            lDot -> glyph
-            lBat -> sd(24).roundToInt()
-            else -> glyph
+        if (left === lNav) {
+            lNav.layoutParams = LayoutParams(-2, -2)
+        } else {
+            val lSize = when (left) {
+                lArt -> artS
+                lLock -> (glyph * 1.05f).roundToInt()
+                lDot -> glyph
+                lBat -> sd(24).roundToInt()
+                else -> glyph
+            }
+            val lH = if (left === lBat) sd(11.5f).roundToInt() else lSize
+            left?.layoutParams = LayoutParams(lSize, lH)
+            left?.measure(ex(lSize), ex(lH))
         }
-        val lH = if (left === lBat) sd(11.5f).roundToInt() else lSize
-        left?.layoutParams = LayoutParams(lSize, lH)
-        left?.measure(ex(lSize), ex(lH))
         when (right) {
             rWave -> { rWave.layoutParams = LayoutParams(sd(22).roundToInt(), sd(13).roundToInt()) }
-            rRing -> { val r = sd(17).roundToInt(); rRing.layoutParams = LayoutParams(r, r) }
+            rRing -> { val r = sd(19).roundToInt(); rRing.layoutParams = LayoutParams(r, r) }
+            rIcon -> { val r = sd(19).roundToInt(); rIcon.layoutParams = LayoutParams(r, r) }
+            rApp -> { val r = (artS * 0.82f).roundToInt(); rApp.layoutParams = LayoutParams(r, r) }
             else -> right?.layoutParams = LayoutParams(-2, -2)
         }
-        leftBox.measure(un, un)
+        leftBox.measure(MeasureSpec.makeMeasureSpec(sd(130).roundToInt(), MeasureSpec.AT_MOST), un)
         rightBox.measure(wide, un)
         leftBox.layoutParams = LayoutParams(leftBox.measuredWidth, leftBox.measuredHeight)
         rightBox.layoutParams = LayoutParams(min(rightBox.measuredWidth, sd(110).roundToInt()), rightBox.measuredHeight)
@@ -448,7 +483,7 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val un = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
         fun ex(v: Int) = MeasureSpec.makeMeasureSpec(v, MeasureSpec.EXACTLY)
-        leftBox.measure(un, un)
+        leftBox.measure(MeasureSpec.makeMeasureSpec(sd(130).roundToInt(), MeasureSpec.AT_MOST), un)
         rightBox.measure(MeasureSpec.makeMeasureSpec(sd(110).roundToInt(), MeasureSpec.AT_MOST), un)
         val d = compactH.roundToInt()
         bubbleBox.measure(ex(d), ex(d))
@@ -459,14 +494,18 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val c = cx()
         val ch = compactH
-        val tw = if (mode == Mode.COMPACT) target[0] else targetFor(Mode.COMPACT)[0]
         val pad = sd(9)
         fun put(v: View, x: Float, centerY: Float) {
             val y = centerY - v.measuredHeight / 2f
             v.layout(x.roundToInt(), y.roundToInt(), (x + v.measuredWidth).roundToInt(), (y + v.measuredHeight).roundToInt())
         }
-        put(leftBox, c - tw / 2 + pad, ch / 2)
-        put(rightBox, c + tw / 2 - pad - rightBox.measuredWidth, ch / 2)
+        // Компактное содержимое раскладывается под ширину своего островка и дальше
+        // только едет вместе с краями (frame) — в том числе когда островок уходит в каплю.
+        if (mode == Mode.COMPACT) {
+            laidOutW = target[0]
+            put(leftBox, c - laidOutW / 2 + pad, ch / 2)
+            put(rightBox, c + laidOutW / 2 - pad - rightBox.measuredWidth, ch / 2)
+        }
         val cw = cardBox.measuredWidth
         val cl = (c - cw / 2f).roundToInt()
         val ct = (notch.bottom + dp(2)).roundToInt()
@@ -495,10 +534,9 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     private fun frame() {
         invalidate()
         if (width == 0) return
-        val tw = if (mode == Mode.COMPACT) target[0] else targetFor(Mode.COMPACT)[0]
-        val shift = (tw - shapeW) / 2f
-        leftBox.translationX = if (mode == Mode.COMPACT) shift else 0f
-        rightBox.translationX = if (mode == Mode.COMPACT) -shift else 0f
+        val shift = (laidOutW - shapeW) / 2f
+        leftBox.translationX = shift
+        rightBox.translationX = -shift
         val d = compactH
         bubbleBox.translationX = bubbleCenter() - d / 2
         bubbleBox.translationY = 0f
@@ -510,7 +548,21 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     }
 
     override fun onDraw(c: Canvas) {
-        if (shapeW <= 0f || shapeH <= 0f) return
+        if (!buildPath()) return
+        c.drawPath(path, black)
+    }
+
+    /** Всё содержимое обрезается по форме — ничего не вылезает за чёрный островок. */
+    override fun dispatchDraw(c: Canvas) {
+        if (!buildPath()) return
+        val save = c.save()
+        c.clipPath(path)
+        super.dispatchDraw(c)
+        c.restoreToCount(save)
+    }
+
+    private fun buildPath(): Boolean {
+        if (shapeW <= 0f || shapeH <= 0f) return false
         val cxx = cx()
         val l = cxx - shapeW / 2
         val r = cxx + shapeW / 2
@@ -531,13 +583,12 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
         path.cubicTo(r, f * 0.45f, r + f * 0.45f, 0f, r + f, 0f)
         path.lineTo(r + f, -1f)
         path.close()
-        c.drawPath(path, black)
-
         // «капелька» второй активности: выкатывается из правого бока островка
         if (bubble > 0.01f) {
             val d = compactH
-            c.drawCircle(bubbleCenter(), d / 2, d / 2 * bubble, black)
+            path.addCircle(bubbleCenter(), d / 2, d / 2 * bubble, Path.Direction.CW)
         }
+        return true
     }
 
     /** Центр «капельки»: при появлении выкатывается из правого края островка. */
@@ -584,7 +635,7 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
                 downX = e.x; downY = e.y
                 tracking = true
                 longFired = false
-                postDelayed(longPress, 380)
+                postDelayed(longPress, 300)
                 pressAnim(true)
             }
             MotionEvent.ACTION_MOVE -> {

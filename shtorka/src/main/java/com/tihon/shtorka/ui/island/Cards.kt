@@ -9,7 +9,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.widget.Chronometer
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -47,8 +46,10 @@ class GlyphCircle(ctx: Context) : View(ctx) {
     private var icon: android.graphics.drawable.Drawable? = null
     var solid = false
 
-    fun set(res: Int, color: Int) {
-        icon = ContextCompat.getDrawable(context, res)!!.mutate().also { it.setTint(if (solid) Palette.WHITE else color) }
+    fun set(res: Int, color: Int) = setDrawable(ContextCompat.getDrawable(context, res), color)
+
+    fun setDrawable(d: android.graphics.drawable.Drawable?, color: Int) {
+        icon = d?.mutate()?.also { it.setTint(if (solid) Palette.WHITE else color) }
         bg.color = if (solid) color else withAlpha(color, 0.22f)
         invalidate()
     }
@@ -93,20 +94,16 @@ class RoundButton(ctx: Context) : View(ctx) {
     }
 }
 
-private fun Context.chrono(sizeSp: Float, color: Int) = Chronometer(this).apply {
+private fun Context.chrono(sizeSp: Float, color: Int) = TimeText(this).apply {
     setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
     typeface = Fonts.semibold
     setTextColor(color)
-    fontFeatureSettings = "tnum"
-    includeFontPadding = false
 }
 
-internal fun Chronometer.bindTo(l: Live) {
+internal fun TimeText.bindTo(l: Live) {
     if (l.chronoBase == 0L) { stop(); visibility = View.GONE; return }
     visibility = View.VISIBLE
-    base = l.chronoBase
-    isCountDown = l.countDown
-    start()
+    bind(l.chronoBase, l.countDown)
 }
 
 private fun pill(color: Int) = GradientDrawable().apply { cornerRadius = 999f; setColor(color) }
@@ -161,27 +158,38 @@ class LiveCard(ctx: Context) : IslandCard(ctx) {
             Kind.RECORDING -> R.drawable.g_record
             else -> 0
         }
+        val nav = l.kind == Kind.NAVIGATION
         if (glyphRes != 0) {
             glyph.visibility = VISIBLE; art.visibility = GONE
             glyph.set(glyphRes, l.accent)
+        } else if (nav) {
+            glyph.visibility = VISIBLE; art.visibility = GONE
+            glyph.setDrawable(l.navIcon ?: ContextCompat.getDrawable(context, R.drawable.g_navigation), Palette.WHITE)
         } else {
             glyph.visibility = GONE; art.visibility = VISIBLE
             art.setDrawable(l.largeIcon ?: l.appIcon)
         }
-        title.text = l.title
-        sub.text = l.text
+        // Навигация: крупно метры, под ними — куда поворачивать.
+        title.text = if (nav && !l.value.isNullOrBlank()) l.value else l.title
+        sub.text = if (nav && !l.value.isNullOrBlank()) l.title else l.text
         sub.visibility = if (l.text.isBlank()) GONE else VISIBLE
         bigTime.setTextColor(l.accent)
         bigTime.bindTo(l)
-        val showText = l.chronoBase == 0L && !l.value.isNullOrBlank() && l.kind != Kind.NAVIGATION && l.kind != Kind.PROGRESS
-        bigText.visibility = if (showText) VISIBLE else GONE
-        bigText.text = l.value
-        bigText.setTextColor(l.accent)
-        val ringOn = l.kind == Kind.HEADPHONES && l.level >= 0
+        val big = when {
+            nav -> l.eta
+            l.kind == Kind.PROGRESS -> l.value
+            l.kind == Kind.HEADPHONES -> l.level.takeIf { it >= 0 }?.let { "$it%" }
+            l.chronoBase == 0L -> l.value
+            else -> null
+        }
+        bigText.visibility = if (big.isNullOrBlank()) GONE else VISIBLE
+        bigText.text = big
+        bigText.setTextColor(if (nav) Palette.GREEN else l.accent)
+        val ringOn = false
         ring.visibility = if (ringOn) VISIBLE else GONE
         ring.progress = l.level / 100f
         ring.color = l.accent
-        bar.visibility = if (l.progress >= 0f && l.kind != Kind.HEADPHONES) VISIBLE else GONE
+        bar.visibility = if (l.progress >= 0f && l.kind == Kind.PROGRESS) VISIBLE else GONE
         bar.set(l.progress.coerceAtLeast(0f))
         acts.removeAllViews()
         acts.visibility = if (l.actions.isEmpty()) GONE else VISIBLE

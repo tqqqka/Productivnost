@@ -46,11 +46,9 @@ class IslandService : AccessibilityService() {
                 }
                 AudioManager.RINGER_MODE_CHANGED_ACTION -> if (!isInitialStickyBroadcast) island.onRinger()
                 BluetoothDevice.ACTION_ACL_CONNECTED -> device(i)?.let { d ->
-                    if (isAudio(d)) {
-                        island.onHeadphones(name(d), Controls.headsetBattery(d))
-                        // заряд часто приходит через секунду-две после подключения
-                        main.postDelayed({ island.onHeadphonesBattery(name(d), Controls.headsetBattery(d)) }, 1800)
-                    }
+                    // Заряд не берём из кэша системы — там бывает устаревшее «100%».
+                    // Свежий придёт отдельным событием через секунду-две после подключения.
+                    if (isAudio(d)) island.onHeadphones(name(d), -1)
                 }
                 ACTION_BT_BATTERY -> device(i)?.let { d ->
                     val lvl = i.getIntExtra(EXTRA_BT_BATTERY, -1)

@@ -66,6 +66,7 @@ class IslandController(private val svc: IslandService) {
         place(intArrayOf(1, 1))
         runCatching { wm.addView(view, lp); attached = true }
         LiveRepo.add(listener)
+        LiveRepo.onFinished = { l -> onDownloadDone(l) }
         MediaRepo.add(listener)
         screenOn = svc.getSystemService(PowerManager::class.java).isInteractive
         if (MediaRepo.now?.playing == true) lastPlayingAt = SystemClock.uptimeMillis()
@@ -75,6 +76,7 @@ class IslandController(private val svc: IslandService) {
     fun detach() {
         if (!attached) return
         LiveRepo.remove(listener)
+        LiveRepo.onFinished = null
         MediaRepo.remove(listener)
         main.removeCallbacksAndMessages(null)
         runCatching { wm.removeViewImmediate(view) }
@@ -133,10 +135,13 @@ class IslandController(private val svc: IslandService) {
 
     fun canShowIdle() = screenOn && Screen.rotation(svc) == Surface.ROTATION_0
 
+    private var lastSig: String? = null
+
     fun update(animate: Boolean = true) {
         if (!attached) return
         if (!screenOn || Screen.rotation(svc) != Surface.ROTATION_0) {
             expandedKey = null
+            lastSig = null
             view.render(null, null, false, animate = false)
             return
         }
@@ -147,7 +152,12 @@ class IslandController(private val svc: IslandService) {
         val secondary = ls.firstOrNull { it !== primary && it.key != primary?.key }
         if (expandedKey != null && ls.none { it.key == expandedKey }) expandedKey = null
         val expanded = primary != null && (
-            primary.kind == Kind.CALL_INCOMING || primary.kind == Kind.BANNER || primary.key == expandedKey)
+            primary.kind == Kind.CALL_INCOMING || primary.kind == Kind.BANNER || primary.kind == Kind.HEADPHONES ||
+                primary.key == expandedKey)
+        // Ничего видимого не изменилось (частые обновления уведомлений) — не трогаем островок.
+        val sig = "${primary?.signature()}#${secondary?.signature()}#$expanded#${Prefs.size}#${Prefs.idlePill}"
+        if (animate && sig == lastSig) return
+        lastSig = sig
         view.render(primary, secondary, expanded, animate)
     }
 
@@ -231,11 +241,16 @@ class IslandController(private val svc: IslandService) {
 
     fun onHeadphones(name: String, level: Int) {
         if (!Prefs.headphones) return
-        show(Live(Kind.HEADPHONES, "headphones", title = name, text = "Подключено", level = level, accent = Palette.WHITE, durationMs = 3600))
+        show(Live(Kind.HEADPHONES, "headphones", title = name, text = "Подключено", level = level, accent = Palette.GREEN, durationMs = 3600))
     }
 
     fun onHeadphonesBattery(name: String, level: Int) {
         if (transient?.kind == Kind.HEADPHONES) onHeadphones(name, level)
+    }
+
+    private fun onDownloadDone(l: Live) {
+        if (!Prefs.downloads) return
+        show(Live(Kind.DONE, "done", pkg = l.pkg, title = l.title, appIcon = l.appIcon, accent = Palette.GREEN, durationMs = 1800, intent = l.intent))
     }
 
     fun onBanner(l: Live) {
@@ -257,9 +272,9 @@ class IslandController(private val svc: IslandService) {
 
     fun onTap() {
         val l = current() ?: return
-        if (l.kind.transient && l.kind != Kind.BANNER) { nextTransient(); return }
+        if (l.kind.transient && l.kind != Kind.BANNER && l.kind != Kind.DONE) { nextTransient(); return }
         openApp(l)
-        if (l.kind == Kind.BANNER) nextTransient()
+        if (l.kind == Kind.BANNER || l.kind == Kind.DONE) nextTransient()
         collapse()
     }
 
@@ -390,12 +405,27 @@ class IslandController(private val svc: IslandService) {
                 LiveRepo.putDemo(Live(Kind.RECORDING, "demo:rec", "", title = "Запись экрана", accent = Palette.RED, chronoBase = now))
                 main.postDelayed({ LiveRepo.removed("demo:rec") }, 15000)
             }
+            Kind.NAVIGATION -> {
+                LiveRepo.putDemo(Live(Kind.NAVIGATION, "demo:nav", "", title = "Поверните направо", text = "ул. Ленина",
+                    value = "300 м", eta = "12 мин", navIcon = androidx.core.content.ContextCompat.getDrawable(svc, com.tihon.shtorka.R.drawable.g_navigation)))
+                main.postDelayed({ LiveRepo.removed("demo:nav") }, 15000)
+            }
+            Kind.PROGRESS -> {
+                // Загрузка за 6 секунд, в конце — галочка.
+                val icon = LiveRepo.appIcon(svc, svc.packageName)
+                for (i in 0..20) main.postDelayed({
+                    val p = i / 20f
+                    LiveRepo.putDemo(Live(Kind.PROGRESS, "demo:dl", "", title = "Загрузка", text = "video.mp4",
+                        appIcon = icon, accent = Palette.BLUE, progress = p, value = "${(p * 100).toInt()}%"))
+                }, i * 300L)
+                main.postDelayed({ LiveRepo.removed("demo:dl") }, 21 * 300L)
+            }
             else -> Unit
         }
     }
 
     companion object {
         /** Сколько островок держит музыку на паузе, прежде чем спрятаться. */
-        const val PAUSE_KEEP_MS = 30_000L
+        const val PAUSE_KEEP_MS = 10_000L
     }
 }

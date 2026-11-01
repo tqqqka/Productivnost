@@ -137,10 +137,21 @@ class MainActivity : Activity() {
             demo("Зарядка", Kind.CHARGING)
             demo("Разблокировка", Kind.UNLOCK)
             demo("Наушники", Kind.HEADPHONES)
+            demo("Навигация", Kind.NAVIGATION)
+            demo("Загрузка", Kind.PROGRESS)
             demo("Запись экрана", Kind.RECORDING)
             demo("Низкий заряд", Kind.LOW_BATTERY)
         }
         note("Тап по островку открывает приложение, долгое нажатие раскрывает, свайп вбок прячет, свайп вверх сворачивает.")
+
+        section("Диагностика")
+        group {
+            button("Что видит островок") { showDump() }
+        }
+        note(
+            "Если таймер, навигация или загрузка из какого-то приложения не появляется в островке — " +
+                "запусти её, открой этот экран и пришли скриншот: там видно, что именно присылает приложение.",
+        )
 
         section("Автозапуск")
         group {
@@ -163,6 +174,36 @@ class MainActivity : Activity() {
             },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = d(28) },
         )
+    }
+
+    /** Сырые поля текущих уведомлений и как островок их понял. */
+    private fun showDump() {
+        val l = Hub.listener
+        if (l == null) {
+            Toast.makeText(this, "Сначала включи «Доступ к уведомлениям»", Toast.LENGTH_LONG).show()
+            return
+        }
+        val text = runCatching { com.tihon.shtorka.system.LiveRepo.dump(this, l.activeNotifications ?: emptyArray()) }
+            .getOrElse { "Не удалось прочитать уведомления: ${it.message}" }
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 12.5f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(Palette.WHITE)
+            setTextIsSelectable(true)
+            setPadding(d(18), d(12), d(18), d(12))
+        }
+        val sv = ScrollView(this).apply { addView(tv) }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Что видит островок")
+            .setView(sv)
+            .setPositiveButton("Скопировать") { _, _ ->
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("island", text))
+                Toast.makeText(this, "Скопировано", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
     }
 
     private fun withService(block: (IslandService) -> Unit) {

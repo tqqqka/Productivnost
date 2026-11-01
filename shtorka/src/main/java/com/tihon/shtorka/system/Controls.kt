@@ -1,6 +1,5 @@
 package com.tihon.shtorka.system
 
-import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -38,8 +37,4 @@ object Controls {
         if (target != am.getStreamVolume(AudioManager.STREAM_MUSIC)) runCatching { am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0) }
     }
 
-    /** Заряд Bluetooth-наушников. Метод скрытый, но для старого targetSdk доступен; -1 — неизвестно. */
-    fun headsetBattery(d: BluetoothDevice): Int = runCatching {
-        d.javaClass.getMethod("getBatteryLevel").invoke(d) as Int
-    }.getOrDefault(-1).let { if (it in 0..100) it else -1 }
 }
