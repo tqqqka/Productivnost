@@ -1,13 +1,7 @@
 package com.tihon.shtorka.ui
 
 import android.content.Context
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
-import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.TypedValue
 import android.view.Gravity
@@ -112,37 +106,4 @@ fun TextView.fitWidth(maxWidth: Int, maxSp: Float, minSp: Float) {
         sp -= 0.5f
     }
     setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.coerceAtLeast(minSp))
-}
-
-/**
- * Стеклянная плашка: полупрозрачная заливка и тонкий светлый ободок,
- * который ярче сверху — как блики на модулях iOS.
- */
-class Glass(ctx: Context) {
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = ctx.dp(1f)
-        shader = LinearGradient(
-            0f, 0f, 0f, 1f,
-            intArrayOf(0x66FFFFFF, 0x14FFFFFF, 0x0AFFFFFF, 0x24FFFFFF),
-            floatArrayOf(0f, 0.35f, 0.75f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-    }
-    private val m = Matrix()
-    private val r = RectF()
-
-    fun draw(c: Canvas, rect: RectF, radius: Float, color: Int = Palette.GLASS, rimAlpha: Float = 1f) {
-        fill.color = color
-        c.drawRoundRect(rect, radius, radius, fill)
-        if (rimAlpha <= 0.01f) return
-        val half = rim.strokeWidth / 2f
-        r.set(rect.left + half, rect.top + half, rect.right - half, rect.bottom - half)
-        m.setScale(1f, rect.height())
-        m.postTranslate(0f, rect.top)
-        rim.shader.setLocalMatrix(m)
-        rim.alpha = (255 * clamp01(rimAlpha)).roundToInt()
-        c.drawRoundRect(r, radius - half, radius - half, rim)
-    }
 }

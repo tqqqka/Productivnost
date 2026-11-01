@@ -6,9 +6,9 @@ Android-приложение против залипания в телефоне
 
 **Готовый APK:** [`release/productivnost-1.1.apk`](release/productivnost-1.1.apk) · 47 МБ · Android 8.0+ · arm64-v8a и armeabi-v7a
 
-> В репозитории есть второе приложение — **[Шторка](shtorka/README.md)**: Пункт управления,
-> Центр уведомлений и островок у капли камеры в стиле iPhone.
-> APK: [`release/shtorka-1.0.apk`](release/shtorka-1.0.apk) · 0.8 МБ.
+> В репозитории есть второе приложение — **[Островок](shtorka/README.md)**: Dynamic Island
+> с iPhone вокруг капли камеры (музыка, звонки, таймеры, запись, навигация, уведомления).
+> APK: [`release/ostrovok-2.0.apk`](release/ostrovok-2.0.apk) · 0.8 МБ.
 
 ---
 

@@ -22,6 +22,8 @@ class HBar(ctx: Context) : android.view.View(ctx) {
     var onRelease: ((Float) -> Unit)? = null
     var dragging = false
         private set
+    /** false — только показывает значение, касания не берёт. */
+    var interactive = true
     private var grow = 0f
     private val growSpring = Spring(0f, 0.002f) { grow = it; invalidate() }
     private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x40FFFFFF }
@@ -49,6 +51,7 @@ class HBar(ctx: Context) : android.view.View(ctx) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!interactive) return false
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)

@@ -1,111 +1,95 @@
 package com.tihon.shtorka.ui.island
 
+import android.app.KeyguardManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Surface
 import android.view.View
 import android.view.WindowManager
 import com.tihon.shtorka.core.Prefs
-import com.tihon.shtorka.service.ShadeService
+import com.tihon.shtorka.service.IslandService
+import com.tihon.shtorka.system.Act
+import com.tihon.shtorka.system.Controls
+import com.tihon.shtorka.system.Kind
 import com.tihon.shtorka.system.Launch
+import com.tihon.shtorka.system.Live
+import com.tihon.shtorka.system.LiveRepo
 import com.tihon.shtorka.system.MediaRepo
 import com.tihon.shtorka.ui.Haptics
+import com.tihon.shtorka.ui.Palette
 import com.tihon.shtorka.ui.Screen
 import com.tihon.shtorka.ui.overlayParams
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Решает, что показывает островок: музыку, зарядку, режим звонка или ничего.
- * Окно островка маленькое и растёт только на время анимации, чтобы не
- * перехватывать касания у приложений под ним.
+ * Мозг островка — как Dynamic Island решает, что показать:
+ *  • главная активность в островке, вторая — «капелькой» справа;
+ *  • короткие события (зарядка, звонок/беззвучный, разблокировка, наушники,
+ *    уведомления) ненадолго вытесняют главную;
+ *  • входящий звонок раскрывается сам;
+ *  • тап открывает приложение, долгое нажатие раскрывает, свайп вбок прячет.
  */
-class IslandController(private val svc: ShadeService) {
+class IslandController(private val svc: IslandService) {
     private val wm = svc.getSystemService(WindowManager::class.java)
     private val main = Handler(Looper.getMainLooper())
-    private val view = IslandView(svc, this)
+    val view = IslandView(svc, this)
+
+    /** Android 14+: окно на всю ширину, неподвижно — касания режет touchable region. */
+    private val fullWidth = Build.VERSION.SDK_INT >= 34
     private val lp = overlayParams(1, 1).apply {
         flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-        title = "Shtorka island"
+        title = "Island"
     }
     private var attached = false
-    private var expanded = false
-    private var transient: IslandView.Kind? = null
-    private var lastPlayingAt = 0L
 
-    private val endTransient = Runnable { transient = null; update() }
-    private val mediaListener: () -> Unit = { onMedia() }
+    private var expandedKey: String? = null
+    private val hidden = HashMap<String, String>()
+    private var transient: Live? = null
+    private val queue = ArrayDeque<Live>()
+    private var foreground: String? = null
+    private var screenOn = true
+    private var lastPlayingAt = 0L
+    private var lastBatteryLevel = -1
+
+    private val endTransient = Runnable { nextTransient() }
+    private val listener: () -> Unit = { onData() }
     private val pausedCheck = Runnable { update() }
 
     fun attach() {
-        if (attached || !Prefs.island) return
+        if (attached) return
         geometry()
         view.visibility = View.INVISIBLE
-        val size = view.windowSizeFor(view.notch.width().toFloat(), view.notch.bottom.toFloat())
-        place(size[0], size[1])
+        place(intArrayOf(1, 1))
         runCatching { wm.addView(view, lp); attached = true }
-        MediaRepo.add(mediaListener)
+        LiveRepo.add(listener)
+        MediaRepo.add(listener)
+        screenOn = svc.getSystemService(PowerManager::class.java).isInteractive
         if (MediaRepo.now?.playing == true) lastPlayingAt = SystemClock.uptimeMillis()
-        update()
+        update(animate = false)
     }
 
     fun detach() {
         if (!attached) return
-        MediaRepo.remove(mediaListener)
+        LiveRepo.remove(listener)
+        MediaRepo.remove(listener)
         main.removeCallbacksAndMessages(null)
         runCatching { wm.removeViewImmediate(view) }
         attached = false
-        expanded = false
-        transient = null
     }
 
     fun applyPrefs() {
-        when {
-            Prefs.island && !attached -> attach()
-            !Prefs.island && attached -> detach()
-            else -> update()
-        }
+        geometry()
+        update(animate = false)
     }
 
     fun onConfigChanged() {
-        if (!attached) return
         geometry()
-        expanded = false
+        expandedKey = null
         update(animate = false)
-    }
-
-    fun onScreenOff() {
-        expanded = false
-        transient = null
-        main.removeCallbacks(endTransient)
-        update(animate = false)
-    }
-
-    fun onCharging(plugged: Boolean) {
-        if (plugged && Prefs.islandCharging) showTransient(IslandView.Kind.CHARGING, 3200)
-    }
-
-    fun onRinger() {
-        if (Prefs.islandRinger) showTransient(IslandView.Kind.RINGER, 2200)
-    }
-
-    private fun showTransient(k: IslandView.Kind, ms: Long) {
-        if (!attached) return
-        transient = k
-        main.removeCallbacks(endTransient)
-        main.postDelayed(endTransient, ms)
-        update()
-    }
-
-    private fun onMedia() {
-        val n = MediaRepo.now
-        if (n?.playing == true) lastPlayingAt = SystemClock.uptimeMillis()
-        main.removeCallbacks(pausedCheck)
-        if (n != null && !n.playing) main.postDelayed(pausedCheck, PAUSE_KEEP_MS + 50)
-        val before = view.kind
-        update()
-        if (view.kind == before) view.refreshMedia()
     }
 
     private fun geometry() {
@@ -113,53 +97,226 @@ class IslandController(private val svc: ShadeService) {
         view.screenW = Screen.size(svc).x
     }
 
-    private fun wanted(): IslandView.Kind {
-        if (Screen.rotation(svc) != Surface.ROTATION_0) return IslandView.Kind.HIDDEN
-        transient?.let { return it }
-        val n = MediaRepo.now
-        val musicOn = Prefs.islandMusic && n != null &&
-            (n.playing || SystemClock.uptimeMillis() - lastPlayingAt < PAUSE_KEEP_MS)
-        if (!musicOn) expanded = false
-        return when {
-            musicOn && expanded -> IslandView.Kind.MEDIA_EXPANDED
-            musicOn -> IslandView.Kind.MEDIA
-            else -> IslandView.Kind.HIDDEN
-        }
+    // ---------- что показывать ----------
+
+    private fun allowed(l: Live) = when (l.kind) {
+        Kind.CALL, Kind.CALL_INCOMING -> Prefs.calls
+        Kind.TIMER, Kind.STOPWATCH -> Prefs.timers
+        Kind.RECORDING -> Prefs.recording
+        Kind.NAVIGATION -> Prefs.navigation
+        Kind.PROGRESS -> Prefs.downloads
+        Kind.MUSIC -> Prefs.music
+        else -> true
     }
+
+    private fun musicLive(): Live? {
+        val n = MediaRepo.now ?: return null
+        if (!n.playing && SystemClock.uptimeMillis() - lastPlayingAt > PAUSE_KEEP_MS) return null
+        return Live(
+            kind = Kind.MUSIC, key = "music", pkg = n.pkg, title = n.title, text = n.artist,
+            art = n.art, accent = n.accent, playing = n.playing,
+            intent = n.controller.sessionActivity,
+        )
+    }
+
+    private fun sig(l: Live) = l.kind.name + "|" + l.title
+
+    private fun lives(): List<Live> {
+        val all = LiveRepo.lives + listOfNotNull(musicLive())
+        hidden.keys.retainAll(all.map { it.key }.toSet())
+        return all.filter { l ->
+            allowed(l) &&
+                hidden[l.key] != sig(l) &&
+                !(Prefs.hideInOwnerApp && l.pkg == foreground && l.kind != Kind.CALL_INCOMING)
+        }.sortedByDescending { it.kind.priority }
+    }
+
+    fun canShowIdle() = screenOn && Screen.rotation(svc) == Surface.ROTATION_0
 
     fun update(animate: Boolean = true) {
         if (!attached) return
-        val k = wanted()
-        if (k == view.kind && view.visibility == View.VISIBLE) return
-        if (k == IslandView.Kind.HIDDEN && view.kind == IslandView.Kind.HIDDEN) return
-        view.setKind(k, animate)
-    }
-
-    // ---------- от вида ----------
-
-    fun onTap() {
-        when (view.kind) {
-            IslandView.Kind.MEDIA -> {
-                expanded = true
-                Haptics.heavy(view)
-                update()
-            }
-            IslandView.Kind.CHARGING, IslandView.Kind.RINGER -> {
-                main.removeCallbacks(endTransient)
-                endTransient.run()
-            }
-            else -> Unit
+        if (!screenOn || Screen.rotation(svc) != Surface.ROTATION_0) {
+            expandedKey = null
+            view.render(null, null, false, animate = false)
+            return
         }
+        val ls = lives()
+        val incoming = ls.firstOrNull { it.kind == Kind.CALL_INCOMING }
+        val t = transient
+        val primary = incoming ?: t ?: ls.firstOrNull()
+        val secondary = ls.firstOrNull { it !== primary && it.key != primary?.key }
+        if (expandedKey != null && ls.none { it.key == expandedKey }) expandedKey = null
+        val expanded = primary != null && (
+            primary.kind == Kind.CALL_INCOMING || primary.kind == Kind.BANNER || primary.key == expandedKey)
+        view.render(primary, secondary, expanded, animate)
     }
 
-    fun collapse() {
-        if (!expanded) return
-        expanded = false
+    private fun onData() {
+        val n = MediaRepo.now
+        if (n?.playing == true) lastPlayingAt = SystemClock.uptimeMillis()
+        main.removeCallbacks(pausedCheck)
+        if (n != null && !n.playing) main.postDelayed(pausedCheck, PAUSE_KEEP_MS + 50)
         update()
     }
 
-    fun openMediaApp() {
-        if (MediaRepo.open(svc)) collapse()
+    // ---------- короткие события ----------
+
+    fun show(l: Live) {
+        if (!attached || !screenOn) return
+        val cur = transient
+        if (cur == null) {
+            startTransient(l)
+        } else if (cur.kind == l.kind) {
+            transient = l
+            main.removeCallbacks(endTransient)
+            main.postDelayed(endTransient, l.durationMs)
+            update()
+        } else {
+            queue.removeAll { it.kind == l.kind }
+            queue.addLast(l)
+        }
+    }
+
+    private fun startTransient(l: Live) {
+        transient = l
+        main.removeCallbacks(endTransient)
+        main.postDelayed(endTransient, l.durationMs)
+        if (l.kind == Kind.CHARGING || l.kind == Kind.RINGER) Haptics.tick(view)
+        update()
+    }
+
+    private fun nextTransient() {
+        main.removeCallbacks(endTransient)
+        transient = null
+        val n = queue.removeFirstOrNull()
+        if (n != null) startTransient(n) else update()
+    }
+
+    fun onScreen(on: Boolean) {
+        screenOn = on
+        if (!on) {
+            expandedKey = null
+            transient = null
+            queue.clear()
+            main.removeCallbacks(endTransient)
+        }
+        update(animate = on)
+    }
+
+    fun onCharging(plugged: Boolean) {
+        if (!plugged || !Prefs.charging) return
+        main.postDelayed({
+            val b = Controls.battery(svc)
+            show(Live(Kind.CHARGING, "charging", level = b.level, accent = Palette.GREEN, durationMs = 3200))
+        }, 600)
+    }
+
+    fun onBattery(level: Int, charging: Boolean) {
+        val prev = lastBatteryLevel
+        lastBatteryLevel = level
+        if (prev < 0 || charging || !Prefs.lowBattery) return
+        val crossed = listOf(20, 10, 5).firstOrNull { level <= it && prev > it } ?: return
+        show(Live(Kind.LOW_BATTERY, "low", level = level, accent = Palette.RED, title = "Низкий заряд", durationMs = 3600, value = "$crossed"))
+    }
+
+    fun onRinger() {
+        if (Prefs.ringer) show(Live(Kind.RINGER, "ringer", durationMs = 2200))
+    }
+
+    fun onUnlock() {
+        if (Prefs.unlock && svc.getSystemService(KeyguardManager::class.java).isKeyguardSecure) {
+            show(Live(Kind.UNLOCK, "unlock", durationMs = 1400))
+        }
+    }
+
+    fun onHeadphones(name: String, level: Int) {
+        if (!Prefs.headphones) return
+        show(Live(Kind.HEADPHONES, "headphones", title = name, text = "Подключено", level = level, accent = Palette.WHITE, durationMs = 3600))
+    }
+
+    fun onHeadphonesBattery(name: String, level: Int) {
+        if (transient?.kind == Kind.HEADPHONES) onHeadphones(name, level)
+    }
+
+    fun onBanner(l: Live) {
+        if (!Prefs.banners) return
+        if (Prefs.hideInOwnerApp && l.pkg == foreground) return
+        if (!svc.getSystemService(PowerManager::class.java).isInteractive) return
+        show(l)
+    }
+
+    fun onForeground(pkg: String) {
+        if (pkg == foreground) return
+        foreground = pkg
+        if (Prefs.hideInOwnerApp) update()
+    }
+
+    // ---------- касания ----------
+
+    private fun current(): Live? = view.primary
+
+    fun onTap() {
+        val l = current() ?: return
+        if (l.kind.transient && l.kind != Kind.BANNER) { nextTransient(); return }
+        openApp(l)
+        if (l.kind == Kind.BANNER) nextTransient()
+        collapse()
+    }
+
+    fun onLongPress() {
+        val l = current() ?: return
+        if (l.kind.transient) return
+        Haptics.heavy(view)
+        expandedKey = l.key
+        update()
+    }
+
+    fun onSwipeAway() {
+        val l = current() ?: return
+        if (l.kind.transient) { nextTransient(); return }
+        hidden[l.key] = sig(l)
+        Haptics.tick(view)
+        update()
+    }
+
+    fun onSwipeUp() {
+        val l = current() ?: return
+        when {
+            l.kind == Kind.BANNER -> nextTransient()
+            l.kind == Kind.CALL_INCOMING -> Unit
+            else -> collapse()
+        }
+    }
+
+    fun onOutside() {
+        val l = current() ?: return
+        if (l.kind == Kind.CALL_INCOMING || l.kind == Kind.BANNER) return
+        collapse()
+    }
+
+    fun onBubbleTap() {
+        view.secondary?.let { openApp(it) }
+    }
+
+    fun onBubbleLongPress() {
+        val s = view.secondary ?: return
+        Haptics.heavy(view)
+        expandedKey = s.key
+        hidden.remove(s.key)
+        // поменять местами: вторая становится главной, раскрытой
+        transient = null
+        update()
+    }
+
+    fun collapse() {
+        if (expandedKey == null) return
+        expandedKey = null
+        update()
+    }
+
+    fun runAction(a: Act) {
+        a.run?.invoke() ?: Launch.send(svc, a.intent)
+        if (current()?.kind == Kind.BANNER) nextTransient()
     }
 
     fun openOutput() {
@@ -167,32 +324,78 @@ class IslandController(private val svc: ShadeService) {
         collapse()
     }
 
-    fun onHidden() {
-        fitWindow(0f, 0f)
+    private fun openApp(l: Live) {
+        if (l.kind == Kind.MUSIC) { MediaRepo.open(svc); return }
+        if (l.pkg.isNotEmpty()) Launch.openApp(svc, l.pkg, l.intent)
     }
 
-    /** Перед ростом — расширить окно, чтобы форма в него влезла. */
-    fun growWindow(w: Float, h: Float) {
-        val s = view.windowSizeFor(w, h)
-        if (s[0] > lp.width || s[1] > lp.height) place(max(s[0], lp.width), max(s[1], lp.height))
+    // ---------- окно ----------
+
+    /** Перед ростом — окно должно вместить форму. */
+    fun growWindow(need: IntArray) {
+        val w = if (fullWidth) view.screenW else need[0]
+        if (w > lp.width || need[1] > lp.height) place(intArrayOf(max(w, if (fullWidth) 0 else lp.width), max(need[1], lp.height)))
     }
 
-    /** После анимации — ужать окно до формы. */
-    fun fitWindow(w: Float, h: Float) {
-        val s = view.windowSizeFor(max(w, view.notch.width().toFloat()), max(h, view.notch.bottom.toFloat()))
-        place(s[0], s[1])
-    }
+    /** После анимации — по размеру формы, чтобы не перехватывать лишние касания. */
+    fun fitWindow(need: IntArray) = place(need)
 
-    private fun place(w: Int, h: Int) {
+    private fun place(need: IntArray) {
+        val w = if (fullWidth) view.screenW.coerceAtLeast(1) else need[0]
+        val h = need[1].coerceAtLeast(1)
+        val x = if (fullWidth) 0 else (view.notch.exactCenterX() - w / 2f).roundToInt()
+        if (lp.width == w && lp.height == h && lp.x == x) return
         lp.width = w
         lp.height = h
-        lp.x = (view.notch.exactCenterX() - w / 2f).roundToInt()
+        lp.x = x
         lp.y = 0
         if (attached) runCatching { wm.updateViewLayout(view, lp) }
     }
 
+    // ---------- показ без событий (кнопки в настройках) ----------
+
+    fun demo(kind: Kind) {
+        if (!attached) return
+        val now = SystemClock.elapsedRealtime()
+        when (kind) {
+            Kind.CALL_INCOMING -> {
+                val key = "demo:call"
+                lateinit var answer: () -> Unit
+                val decline = { LiveRepo.removed(key) }
+                answer = {
+                    LiveRepo.putDemo(
+                        Live(Kind.CALL, key, "", title = "Мама", text = "мобильный", accent = Palette.GREEN,
+                            chronoBase = SystemClock.elapsedRealtime(), actions = listOf(Act("Завершить", null, Act.Role.DECLINE, decline))),
+                    )
+                    main.postDelayed({ LiveRepo.removed(key) }, 15000)
+                }
+                LiveRepo.putDemo(
+                    Live(Kind.CALL_INCOMING, key, "", title = "Мама", accent = Palette.GREEN,
+                        actions = listOf(Act("Отклонить", null, Act.Role.DECLINE, decline), Act("Ответить", null, Act.Role.ACCEPT) { answer() })),
+                )
+            }
+            Kind.TIMER -> {
+                LiveRepo.putDemo(Live(Kind.TIMER, "demo:timer", "", title = "Таймер", text = "Паста",
+                    accent = Palette.ORANGE, chronoBase = now + 5 * 60_000, countDown = true))
+                main.postDelayed({ LiveRepo.removed("demo:timer") }, 20000)
+            }
+            Kind.BANNER -> show(Live(Kind.BANNER, "demo:banner", "", title = "Мама",
+                text = "Ты где? Ужин стынет, приходи скорее домой", value = "Сообщения", durationMs = 5000))
+            Kind.CHARGING -> show(Live(Kind.CHARGING, "charging", level = Controls.battery(svc).level, accent = Palette.GREEN, durationMs = 3200))
+            Kind.UNLOCK -> show(Live(Kind.UNLOCK, "unlock", durationMs = 1400))
+            Kind.HEADPHONES -> show(Live(Kind.HEADPHONES, "headphones", title = "Наушники", text = "Подключено", level = 80, durationMs = 3600))
+            Kind.RINGER -> show(Live(Kind.RINGER, "ringer", durationMs = 2200))
+            Kind.LOW_BATTERY -> show(Live(Kind.LOW_BATTERY, "low", level = 10, accent = Palette.RED, durationMs = 3600))
+            Kind.RECORDING -> {
+                LiveRepo.putDemo(Live(Kind.RECORDING, "demo:rec", "", title = "Запись экрана", accent = Palette.RED, chronoBase = now))
+                main.postDelayed({ LiveRepo.removed("demo:rec") }, 15000)
+            }
+            else -> Unit
+        }
+    }
+
     companion object {
         /** Сколько островок держит музыку на паузе, прежде чем спрятаться. */
-        const val PAUSE_KEEP_MS = 8000L
+        const val PAUSE_KEEP_MS = 30_000L
     }
 }

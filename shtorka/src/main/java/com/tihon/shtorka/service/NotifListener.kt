@@ -1,22 +1,28 @@
 package com.tihon.shtorka.service
 
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import com.tihon.shtorka.core.Bus
 import com.tihon.shtorka.core.Hub
+import com.tihon.shtorka.system.LiveRepo
 import com.tihon.shtorka.system.MediaRepo
-import com.tihon.shtorka.system.NotifRepo
 
-/** Источник уведомлений для Центра уведомлений и ключ к сессиям музыки. */
+/**
+ * Источник живых активностей (звонки, таймеры, запись, навигация, загрузки),
+ * всплывающих уведомлений и ключ к сессиям музыки.
+ */
 class NotifListener : NotificationListenerService() {
+    /** Чтобы обновление того же уведомления не всплывало заново. */
+    private val seen = HashMap<String, Int>()
 
     override fun onListenerConnected() {
         Hub.listener = this
         val all = runCatching { activeNotifications }.getOrNull() ?: emptyArray()
-        NotifRepo.setAll(this, all)
+        all.forEach { seen[it.key] = signature(it) }
+        LiveRepo.setAll(this, all)
         MediaRepo.start(applicationContext)
-        Bus.fire()
     }
 
     override fun onListenerDisconnected() {
@@ -24,17 +30,34 @@ class NotifListener : NotificationListenerService() {
         runCatching { requestRebind(ComponentName(this, NotifListener::class.java)) }
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) = NotifRepo.posted(this, sbn)
-
-    override fun onNotificationRemoved(sbn: StatusBarNotification) = NotifRepo.removed(sbn.key)
-
-    override fun onInterruptionFilterChanged(interruptionFilter: Int) = Bus.fire()
-
-    fun dismiss(keys: Collection<String>) {
-        keys.forEach { runCatching { cancelNotification(it) } }
+    override fun onNotificationPosted(sbn: StatusBarNotification, rankingMap: RankingMap?) {
+        LiveRepo.posted(this, sbn)
+        maybeBanner(sbn, rankingMap)
     }
 
-    fun dismissAll() {
-        runCatching { cancelAllNotifications() }
+    override fun onNotificationPosted(sbn: StatusBarNotification) = onNotificationPosted(sbn, null)
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        seen.remove(sbn.key)
+        LiveRepo.removed(sbn.key)
+    }
+
+    private fun signature(sbn: StatusBarNotification): Int {
+        val ex = sbn.notification.extras
+        return (ex?.getCharSequence(Notification.EXTRA_TITLE)?.toString() + "|" + ex?.getCharSequence(Notification.EXTRA_TEXT)).hashCode()
+    }
+
+    private fun maybeBanner(sbn: StatusBarNotification, rankingMap: RankingMap?) {
+        val sig = signature(sbn)
+        val prev = seen.put(sbn.key, sig)
+        val n = sbn.notification
+        if (prev != null && (prev == sig || n.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)) return
+        // Только то, что и так всплыло бы: важность «со звуком» и не заглушено «Не беспокоить».
+        val r = Ranking()
+        if (rankingMap != null && rankingMap.getRanking(sbn.key, r)) {
+            if (r.importance < NotificationManager.IMPORTANCE_DEFAULT || !r.matchesInterruptionFilter()) return
+        }
+        val l = LiveRepo.banner(this, sbn) ?: return
+        Hub.service?.island?.onBanner(l)
     }
 }

@@ -5,31 +5,42 @@ import android.content.SharedPreferences
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
-/** Настройки приложения. Служба слушает изменения и применяет их на лету. */
+/** Настройки островка. Служба слушает изменения и применяет их на лету. */
 object Prefs {
     lateinit var sp: SharedPreferences
         private set
 
     fun init(ctx: Context) {
-        sp = ctx.getSharedPreferences("shtorka", Context.MODE_PRIVATE)
+        sp = ctx.getSharedPreferences("island", Context.MODE_PRIVATE)
     }
 
-    /** Свайп справа от капли — Пункт управления. */
-    var controlCenter by flag("control_center", true)
+    // Что показывать
+    var music by flag("music", true)
+    var calls by flag("calls", true)
+    var timers by flag("timers", true)
+    var recording by flag("recording", true)
+    var navigation by flag("navigation", true)
+    var downloads by flag("downloads", true)
+    var banners by flag("banners", true)
+    var charging by flag("charging", true)
+    var lowBattery by flag("low_battery", true)
+    var ringer by flag("ringer", true)
+    var unlock by flag("unlock", true)
+    var headphones by flag("headphones", true)
 
-    /** Свайп слева от капли — Центр уведомлений. */
-    var notificationCenter by flag("notification_center", true)
-
-    /** Островок у капли камеры. */
-    var island by flag("island", true)
-    var islandMusic by flag("island_music", true)
-    var islandCharging by flag("island_charging", true)
-    var islandRinger by flag("island_ringer", true)
-
-    /** Нижний ряд: энергосбережение, тёмная тема, запись экрана, будильник. */
-    var extraRow by flag("extra_row", true)
-
+    // Поведение
+    /** Чёрная пилюля в покое, как на iPhone (иначе прячется в каплю). */
+    var idlePill by flag("idle_pill", false)
+    /** Не показывать активность, когда открыто её же приложение — как в iOS. */
+    var hideInOwnerApp by flag("hide_in_app", true)
     var haptics by flag("haptics", true)
+
+    /** 0 — маленький, 1 — обычный, 2 — крупный. */
+    var size: Int
+        get() = sp.getInt("size", 1)
+        set(v) { sp.edit().putInt("size", v).apply() }
+
+    val sizeScale: Float get() = when (size) { 0 -> 0.82f; 2 -> 1.18f; else -> 1f }
 
     private fun flag(key: String, def: Boolean) = object : ReadWriteProperty<Any?, Boolean> {
         override fun getValue(thisRef: Any?, property: KProperty<*>) = sp.getBoolean(key, def)

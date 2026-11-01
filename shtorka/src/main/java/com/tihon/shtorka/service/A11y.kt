@@ -10,7 +10,7 @@ import com.tihon.shtorka.core.Hub
 
 /** Проверки доступов и самовключение службы после загрузки. */
 object A11y {
-    fun component(ctx: Context) = ComponentName(ctx, ShadeService::class.java)
+    fun component(ctx: Context) = ComponentName(ctx, IslandService::class.java)
 
     fun enabled(ctx: Context): Boolean {
         val s = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false

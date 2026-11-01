@@ -12,7 +12,7 @@ import com.tihon.shtorka.R
 
 /**
  * Включённую службу специальных возможностей система запускает сама при
- * каждой загрузке — так шторка работает сразу после включения телефона.
+ * каждой загрузке — так островок работает сразу после включения телефона.
  * Ресивер страхует: если службу кто-то выключил, он включит её обратно
  * (при выданном через adb разрешении) или хотя бы напомнит уведомлением.
  */
@@ -26,7 +26,7 @@ class BootReceiver : BroadcastReceiver() {
     private fun remind(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel("state", "Состояние шторки", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel("state", "Состояние островка", NotificationManager.IMPORTANCE_DEFAULT),
         )
         val pi = PendingIntent.getActivity(
             ctx, 0, Intent(ctx, MainActivity::class.java),
@@ -34,7 +34,7 @@ class BootReceiver : BroadcastReceiver() {
         )
         val n = Notification.Builder(ctx, "state")
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("Шторка выключена")
+            .setContentTitle("Островок выключен")
             .setContentText("Нажми, чтобы снова включить службу")
             .setContentIntent(pi)
             .setAutoCancel(true)

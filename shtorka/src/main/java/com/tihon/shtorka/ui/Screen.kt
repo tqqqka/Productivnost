@@ -6,6 +6,7 @@ import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.view.Display
+import android.view.WindowManager
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -50,3 +51,23 @@ object Screen {
     fun hasRealNotch(ctx: Context): Boolean =
         Build.VERSION.SDK_INT >= 29 && runCatching { display(ctx).cutout?.boundingRectTop?.isEmpty == false }.getOrDefault(false)
 }
+
+/** Окно поверх всего, включая строку состояния: доступно только службе спец. возможностей. */
+fun overlayParams(w: Int, h: Int): WindowManager.LayoutParams =
+    WindowManager.LayoutParams(
+        w, h,
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+        android.graphics.PixelFormat.TRANSLUCENT,
+    ).apply {
+        gravity = android.view.Gravity.TOP or android.view.Gravity.START
+        if (Build.VERSION.SDK_INT >= 30) {
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else if (Build.VERSION.SDK_INT >= 28) {
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+    }

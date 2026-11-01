@@ -10,13 +10,12 @@ android {
     defaultConfig {
         applicationId = "com.tihon.shtorka"
         minSdk = 26
-        // 28 — осознанно. С targetSdk 29+ Android запрещает приложениям
-        // включать и выключать Wi-Fi (setWifiEnabled), с 33+ — Bluetooth.
-        // Для старого targetSdk оба вызова работают и на Android 15,
-        // поэтому кнопки в Пункте управления переключают сразу, без панелей.
+        // 28 — осознанно: так подключение Bluetooth-наушников и их заряд
+        // приходят без запроса разрешения «Устройства поблизости», а скрытый
+        // getBatteryLevel() у наушников остаётся доступным.
         targetSdk = 28
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
     }
 
     // Ключ подписи в репозиторий не попадает. Если он лежит рядом —

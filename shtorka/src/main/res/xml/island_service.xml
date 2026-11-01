@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Служба нужна ради одного: окно TYPE_ACCESSIBILITY_OVERLAY лежит выше строки
+  состояния и капли камеры — только так островок может «прирасти» к вырезу.
+  Событие смены окна говорит, какое приложение открыто: как iPhone, островок
+  прячет активность, пока открыто её же приложение. Содержимое экрана не читается.
+  Включённую службу Android сам запускает после перезагрузки.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/service_description"
+    android:notificationTimeout="300"
+    android:settingsActivity="com.tihon.shtorka.MainActivity" />
