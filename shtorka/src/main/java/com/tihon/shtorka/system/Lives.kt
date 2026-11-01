@@ -97,8 +97,15 @@ object LiveRepo {
         val prev = byKey[sbn.key]
         if (l == null) {
             if (byKey.remove(sbn.key) != null) {
-                finished(prev)
+                finished(prev, saysDone(sbn))
                 changed()
+            } else {
+                // Загрузка завершилась новым уведомлением «Загрузка завершена».
+                val r = recentEnd[sbn.packageName]
+                if (r != null && SystemClock.uptimeMillis() - r.second < 6000 && saysDone(sbn)) {
+                    recentEnd.remove(sbn.packageName)
+                    onFinished?.invoke(r.first)
+                }
             }
             return
         }
@@ -108,12 +115,22 @@ object LiveRepo {
 
     fun removed(key: String) {
         val prev = byKey.remove(key) ?: return
-        finished(prev)
+        finished(prev, false)
         changed()
     }
 
-    private fun finished(prev: Live?) {
-        if (prev != null && prev.kind == Kind.PROGRESS && prev.progress >= 0.9f) onFinished?.invoke(prev)
+    private val recentEnd = HashMap<String, Pair<Live, Long>>()
+    private val DONE_WORDS = listOf("заверш", "готово", "загружен", "скачан", "сохран", "complete", "downloaded", "finished", "done", "saved")
+
+    private fun saysDone(sbn: StatusBarNotification): Boolean {
+        val t = texts(sbn.notification.extras ?: Bundle()).joinToString(" ").lowercase()
+        return DONE_WORDS.any { t.contains(it) }
+    }
+
+    private fun finished(prev: Live?, done: Boolean) {
+        if (prev == null || prev.kind != Kind.PROGRESS) return
+        if (done || prev.progress >= 0.75f) onFinished?.invoke(prev)
+        else recentEnd[prev.pkg] = prev to SystemClock.uptimeMillis()
     }
 
     fun putDemo(l: Live) { byKey[l.key] = l; changed() }
@@ -165,6 +182,45 @@ object LiveRepo {
         return out
     }
 
+    private val STD_KEYS = setOf(
+        Notification.EXTRA_TITLE, Notification.EXTRA_TITLE_BIG, Notification.EXTRA_TEXT, Notification.EXTRA_BIG_TEXT,
+        Notification.EXTRA_SUB_TEXT, Notification.EXTRA_INFO_TEXT, Notification.EXTRA_SUMMARY_TEXT,
+    )
+
+    /**
+     * Все строки и «метки времени» из extras, включая вложенные Bundle.
+     * Возвращает тексты и, если нашлась, базу времени (elapsedRealtime) с направлением.
+     */
+    private fun deepExtras(ex: Bundle): Pair<List<String>, Pair<Long, Boolean>?> {
+        val texts = ArrayList<String>()
+        var best: Pair<Long, Boolean>? = null
+        val nowWall = System.currentTimeMillis()
+        val nowEl = SystemClock.elapsedRealtime()
+        val day = 24 * 3600_000L
+        fun walk(b: Bundle, depth: Int) {
+            for (k in b.keySet()) {
+                if (k in STD_KEYS) continue
+                @Suppress("DEPRECATION") val v = runCatching { b.get(k) }.getOrNull() ?: continue
+                val lk = k.lowercase()
+                val timeKey = listOf("time", "base", "end", "chrono", "remain", "target", "finish", "expire").any { lk.contains(it) }
+                when (v) {
+                    is CharSequence -> v.toString().takeIf { it.isNotBlank() && it.length < 80 }?.let { texts += it }
+                    is Long -> if (timeKey && best == null) {
+                        best = when {
+                            lk.contains("remain") && v in 1000..day -> nowEl + v to true
+                            v in (nowWall + 1500)..(nowWall + day) -> nowEl + (v - nowWall) to true
+                            v in (nowEl + 1500)..(nowEl + day) -> v to true
+                            else -> null
+                        }
+                    }
+                    is Bundle -> if (depth < 2) walk(v, depth + 1)
+                }
+            }
+        }
+        walk(ex, 0)
+        return texts to best
+    }
+
     /** Разворачивает RemoteViews уведомления и собирает тексты, картинки и секундомер. */
     @Suppress("DEPRECATION")
     private fun scan(ctx: Context, n: Notification): Scan? {
@@ -194,6 +250,8 @@ object LiveRepo {
         val n = sbn.notification
         val ex = n.extras ?: Bundle()
         if (ex.containsKey(Notification.EXTRA_MEDIA_SESSION)) return null
+        // Сводка группы — дубль настоящего уведомления (часы шлют обе).
+        if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return null
 
         val ongoing = n.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_FOREGROUND_SERVICE or Notification.FLAG_NO_CLEAR) != 0
         var title = ex.str(Notification.EXTRA_TITLE).ifBlank { ex.str(Notification.EXTRA_TITLE_BIG) }
@@ -222,6 +280,18 @@ object LiveRepo {
                 if (s.chronoBase != 0L && !chrono) { chrono = true; base = s.chronoBase; countDown = s.countDown }
                 if (timeText == null) timeText = s.texts.firstNotNullOfOrNull { TIME.find(it)?.value }
             }
+        }
+        // Нестандартные поля (Samsung кладёт время своими ключами): тексты и метки времени.
+        if ((isClock || isNav || isRec) && !chrono && timeText == null) {
+            val deep = deepExtras(ex)
+            allText += deep.first
+            timeText = deep.first.firstNotNullOfOrNull { TIME.find(it)?.value }
+            if (timeText == null) deep.second?.let { (b, down) -> chrono = true; base = b; countDown = down }
+        }
+        // Таймер, у которого «время уведомления» в будущем, — это и есть момент окончания.
+        if (isClock && !chrono && timeText == null && n.`when` > System.currentTimeMillis() + 1500) {
+            chrono = true
+            countDown = true
         }
         // Время в будущем — это обратный отсчёт, даже если флаг не поставили.
         if (chrono && base > SystemClock.elapsedRealtime() + 1500) countDown = true
@@ -385,6 +455,19 @@ object LiveRepo {
                 append('\n')
             }
             n.actions?.takeIf { it.isNotEmpty() }?.let { a -> append("  кнопки: ").append(a.joinToString { it.title }).append('\n') }
+            append("  when: ").append((n.`when` - now) / 1000).append("с")
+            if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) append(" · сводка группы")
+            append('\n')
+            val extra = ex.keySet().filter { it !in STD_KEYS && !it.startsWith("android.title") && it != "android.text" }
+            extra.take(14).forEach { k ->
+                @Suppress("DEPRECATION") val v = runCatching { ex.get(k) }.getOrNull()
+                val shown = when (v) {
+                    null -> "null"
+                    is CharSequence, is Number, is Boolean -> v.toString().take(40)
+                    else -> v.javaClass.simpleName
+                }
+                append("  · ").append(k.removePrefix("android.")).append(" = ").append(shown).append('\n')
+            }
             append('\n')
         }
         if (isEmpty()) append("Уведомлений нет — или не выдан доступ к уведомлениям.")

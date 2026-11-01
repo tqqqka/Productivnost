@@ -91,13 +91,15 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
     private val rRing = ProgressRing(ctx)
     private val rBat = BatteryGlyph(ctx)
     private val rIcon = ImageView(ctx)
-    private val rApp = ArtView(ctx).apply { radiusFraction = 0.28f }
+    private val rApp = ArtView(ctx).apply { radiusFraction = 0.28f; setPlaceholder(R.drawable.g_navigation) }
     private val lefts = listOf<View>(lArt, lIcon, lLock, lDot, lBat, lNav)
     private val rights = listOf<View>(rWave, rChrono, rText, rRing, rBat, rIcon, rApp)
 
     // ---------- вторая активность («капелька» справа) ----------
     private val bubbleBox = FrameLayout(ctx)
-    private val bArt = ArtView(ctx).apply { circle = true }
+    private val bArt = ArtView(ctx).apply { radiusFraction = 0.24f }
+    /** Музыка во второй «капельке» — скруглённым квадратиком с обложкой, остальное — кружком. */
+    private var bubbleSquare = false
     private val bIcon = ImageView(ctx)
 
     // ---------- раскрытое ----------
@@ -344,14 +346,14 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
                 }
             }
             Kind.PROGRESS -> {
-                lArt.circle = false; lArt.setDrawable(l.appIcon); left = lArt
+                icon(R.drawable.g_file, Palette.WHITE); left = lIcon
                 rRing.color = l.accent
                 rRing.indeterminate = l.indeterminate
                 rRing.progress = l.progress.coerceAtLeast(0f)
                 right = rRing
             }
             Kind.DONE -> {
-                lArt.circle = false; lArt.setDrawable(l.appIcon); left = lArt
+                icon(R.drawable.g_file, Palette.WHITE); left = lIcon
                 rIcon.setImageDrawable(ContextCompat.getDrawable(context, R.drawable.g_check)!!.mutate().also { it.setTint(Palette.GREEN) })
                 right = rIcon
             }
@@ -432,7 +434,8 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
 
     private fun bindBubble(l: Live?) {
         if (l == null) return
-        val d = (compactH * 0.62f).roundToInt()
+        bubbleSquare = l.kind == Kind.MUSIC
+        val d = (compactH * 0.66f).roundToInt()
         if (l.kind == Kind.MUSIC && l.art != null) {
             bArt.setBitmap(l.art); bArt.visibility = VISIBLE; bIcon.visibility = GONE
             bArt.layoutParams = LayoutParams(d, d)
@@ -586,7 +589,14 @@ class IslandView(ctx: Context, private val ctl: IslandController) : FrameLayout(
         // «капелька» второй активности: выкатывается из правого бока островка
         if (bubble > 0.01f) {
             val d = compactH
-            path.addCircle(bubbleCenter(), d / 2, d / 2 * bubble, Path.Direction.CW)
+            val half = d / 2 * bubble
+            val bc = bubbleCenter()
+            if (bubbleSquare) {
+                arc.set(bc - half, d / 2 - half, bc + half, d / 2 + half)
+                path.addRoundRect(arc, half * 0.62f, half * 0.62f, Path.Direction.CW)
+            } else {
+                path.addCircle(bc, d / 2, half, Path.Direction.CW)
+            }
         }
         return true
     }

@@ -1,6 +1,5 @@
 package com.tihon.shtorka.ui.island
 
-import android.app.KeyguardManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -111,15 +110,33 @@ class IslandController(private val svc: IslandService) {
         else -> true
     }
 
+    private val audio = svc.getSystemService(android.media.AudioManager::class.java)
+    private val recheckMusic = Runnable { update() }
+
+    /**
+     * Музыка — только если её реально слышно. Некоторые приложения держат сессию
+     * в состоянии «играю», хотя звука нет, — тогда островок показывал пустую обложку.
+     */
     private fun musicLive(): Live? {
         val n = MediaRepo.now ?: return null
-        if (!n.playing && SystemClock.uptimeMillis() - lastPlayingAt > PAUSE_KEEP_MS) return null
+        val audible = n.playing && runCatching { audio.isMusicActive }.getOrDefault(true)
+        val now = SystemClock.uptimeMillis()
+        if (audible) lastPlayingAt = now
+        if (n.playing && !audible && now - stateChangedAt < 6000) {
+            // звук мог ещё не начаться — проверим чуть позже (недолго)
+            main.removeCallbacks(recheckMusic)
+            main.postDelayed(recheckMusic, 1200)
+        }
+        if (!audible && (lastPlayingAt == 0L || now - lastPlayingAt > PAUSE_KEEP_MS)) return null
         return Live(
             kind = Kind.MUSIC, key = "music", pkg = n.pkg, title = n.title, text = n.artist,
-            art = n.art, accent = n.accent, playing = n.playing,
+            art = n.art, accent = n.accent, playing = audible,
             intent = n.controller.sessionActivity,
         )
     }
+
+    /** Сколько полезного в активности: при дублях (часы шлют два уведомления) берём лучшее. */
+    private fun richness(l: Live) = (if (l.chronoBase != 0L) 4 else 0) + (if (!l.value.isNullOrBlank()) 2 else 0) + (if (l.actions.isNotEmpty()) 1 else 0)
 
     private fun sig(l: Live) = l.kind.name + "|" + l.title
 
@@ -130,7 +147,10 @@ class IslandController(private val svc: IslandService) {
             allowed(l) &&
                 hidden[l.key] != sig(l) &&
                 !(Prefs.hideInOwnerApp && l.pkg == foreground && l.kind != Kind.CALL_INCOMING)
-        }.sortedByDescending { it.kind.priority }
+        }
+            // одно приложение — одна активность каждого вида
+            .groupBy { it.pkg + "|" + it.kind }.values.map { g -> g.maxBy { richness(it) } }
+            .sortedByDescending { it.kind.priority }
     }
 
     fun canShowIdle() = screenOn && Screen.rotation(svc) == Surface.ROTATION_0
@@ -161,9 +181,15 @@ class IslandController(private val svc: IslandService) {
         view.render(primary, secondary, expanded, animate)
     }
 
+    private var stateChangedAt = 0L
+    private var lastPlayingState: Boolean? = null
+
     private fun onData() {
         val n = MediaRepo.now
-        if (n?.playing == true) lastPlayingAt = SystemClock.uptimeMillis()
+        if (n?.playing != lastPlayingState) {
+            lastPlayingState = n?.playing
+            stateChangedAt = SystemClock.uptimeMillis()
+        }
         main.removeCallbacks(pausedCheck)
         if (n != null && !n.playing) main.postDelayed(pausedCheck, PAUSE_KEEP_MS + 50)
         update()
@@ -234,9 +260,10 @@ class IslandController(private val svc: IslandService) {
     }
 
     fun onUnlock() {
-        if (Prefs.unlock && svc.getSystemService(KeyguardManager::class.java).isKeyguardSecure) {
-            show(Live(Kind.UNLOCK, "unlock", durationMs = 1400))
-        }
+        if (!Prefs.unlock) return
+        // «Разблокировано» при входе по отпечатку бывает раньше «экран включён».
+        screenOn = true
+        show(Live(Kind.UNLOCK, "unlock", durationMs = 1500))
     }
 
     fun onHeadphones(name: String, level: Int) {
